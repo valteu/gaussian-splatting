@@ -105,7 +105,7 @@ if(args.resize):
         exit_code = os.system(magick_command + " mogrify -resize 50% " + destination_file)
         if exit_code != 0:
             logging.error(f"50% resize failed with code {exit_code}. Exiting.")
-            exit(exit_code)
+            exit(exit_code) 
 
         destination_file = os.path.join(args.source_path, "images_4", file)
         shutil.copy2(source_file, destination_file)
