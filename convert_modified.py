@@ -11,8 +11,7 @@ import numpy as np
 parser = ArgumentParser("Colmap converter")
 parser.add_argument("--no_gpu", action='store_true')
 parser.add_argument("--skip_matching", action='store_true')
-parser.add_argument("--source_path", "-s", required=True, type=str)
-parser.add_argument("--color_path", "-c", required=True, type=str)
+parser.add_argument("--dataset_path", "-d", required=True, type=str)
 parser.add_argument("--camera", default="OPENCV", type=str)
 parser.add_argument("--colmap_executable", default="", type=str)
 parser.add_argument("--resize", action="store_true")
@@ -155,12 +154,12 @@ def write_ply(points3D, file_path):
 # Read points3D and update colors
 
 if not args.skip_matching:
-    os.makedirs(args.source_path + "/distorted/sparse", exist_ok=True)
+    os.makedirs(args.dataset_path + "/distorted/sparse", exist_ok=True)
 
     # Feature extraction
     feat_extraction_cmd = (colmap_command + " feature_extractor "
-        "--database_path " + args.source_path + "/distorted/database.db "
-        "--image_path " + args.source_path + "/input "
+        "--database_path " + args.dataset_path + "/distorted/database.db "
+        "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
         "--ImageReader.single_camera 1 "
         "--ImageReader.camera_model " + args.camera + " "
         "--SiftExtraction.use_gpu " + str(use_gpu))
@@ -168,57 +167,64 @@ if not args.skip_matching:
 
     # Feature matching
     feat_matching_cmd = (colmap_command + " exhaustive_matcher "
-        "--database_path " + args.source_path + "/distorted/database.db "
+        "--database_path " + args.dataset_path + "/distorted/database.db "
         "--SiftMatching.use_gpu " + str(use_gpu))
     run_command(feat_matching_cmd)
 
     # Bundle adjustment
     mapper_cmd = (colmap_command + " mapper "
-        "--database_path " + args.source_path + "/distorted/database.db "
-        "--image_path " + args.source_path + "/input "
-        "--output_path " + args.source_path + "/distorted/sparse "
+        "--database_path " + args.dataset_path + "/distorted/database.db "
+        "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
+        "--output_path " + args.dataset_path + "/distorted/sparse "
         "--Mapper.ba_global_function_tolerance=0.000001")
     run_command(mapper_cmd)
 
 # Image undistortion
 img_undist_cmd = (colmap_command + " image_undistorter "
-    "--image_path " + args.source_path + "/input "
-    "--input_path " + args.source_path + "/distorted/sparse/0 "
-    "--output_path " + args.source_path + " "
+    "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
+    "--input_path " + args.dataset_path + "/distorted/sparse/0 "
+    "--output_path " + args.dataset_path + " "
     "--output_type COLMAP")
 run_command(img_undist_cmd)
 
 # Move sparse files
-sparse_files = os.listdir(args.source_path + "/sparse")
-os.makedirs(args.source_path + "/sparse/0", exist_ok=True)
+sparse_files = os.listdir(args.dataset_path + "/sparse")
+os.makedirs(args.dataset_path + "/sparse/0", exist_ok=True)
 for file in sparse_files:
     if file == '0':
         continue
-    source_file = os.path.join(args.source_path, "sparse", file)
-    destination_file = os.path.join(args.source_path, "sparse", "0", file)
+    source_file = os.path.join(args.dataset_path, "sparse", file)
+    destination_file = os.path.join(args.dataset_path, "sparse", "0", file)
     shutil.move(source_file, destination_file)
 
 # Resize images if required
 if args.resize:
     print("Copying and resizing...")
 
-    os.makedirs(args.source_path + "/images_2", exist_ok=True)
-    os.makedirs(args.source_path + "/images_4", exist_ok=True)
-    os.makedirs(args.source_path + "/images_8", exist_ok=True)
+    os.makedirs(args.dataset_path + "/images_2", exist_ok=True)
+    os.makedirs(args.dataset_path + "/images_4", exist_ok=True)
+    os.makedirs(args.dataset_path + "/images_8", exist_ok=True)
 
-    image_files = os.listdir(args.source_path + "/images")
-    for file in image_files:
-        source_file = os.path.join(args.source_path, "images", file)
+    image_files = os.listdir(os.path.join(args.dataset_path, "color/input"))
+    for image_file in image_files:
+        img = Image.open(os.path.join(args.dataset_path, "color/input", image_file))
 
-        for size, folder in zip([50, 25, 12.5], ["images_2", "images_4", "images_8"]):
-            destination_file = os.path.join(args.source_path, folder, file)
-            shutil.copy2(source_file, destination_file)
-            run_command(magick_command + f" mogrify -resize {size}% " + destination_file)
+        # Resize and save the images
+        img.resize((img.width // 2, img.height // 2)).save(os.path.join(args.dataset_path, "images_2", image_file))
+        img.resize((img.width // 4, img.height // 4)).save(os.path.join(args.dataset_path, "images_4", image_file))
+        img.resize((img.width // 8, img.height // 8)).save(os.path.join(args.dataset_path, "images_8", image_file))
 
-print("Done.")
+# Update database and points3D colors
+image_names = update_image_colors(os.path.join(args.dataset_path, "distorted/database.db"), os.path.join(args.dataset_path, "color"))
+points3D = read_points3D_bin(os.path.join(args.dataset_path, "sparse/0/points3D.bin"))
+points3D = update_point_colors(points3D, os.path.join(args.dataset_path, "color"), image_names)
+write_points3D_bin(os.path.join(args.dataset_path, "sparse/0/points3D.bin"), points3D)
 
-image_names = update_image_colors(os.path.join(args.source_path, "distorted/database.db"), args.color_path)
-points3D = read_points3D_bin(os.path.join(args.source_path, "sparse/0/points3D.bin"))
-points3D = update_point_colors(points3D, args.color_path, image_names)
-write_points3D_bin(os.path.join(args.source_path, "sparse/0/points3D.bin"), points3D)
-write_ply(points3D, os.path.join(args.source_path, "sparse/0/points3D.ply"))
+# Write PLY file
+write_ply(points3D, os.path.join(args.dataset_path, "sparse/0/colmap_points.ply"))
+
+# Replace the structure/input and /images directories with the color/input images
+shutil.rmtree(os.path.join(args.dataset_path, "structure/input"))
+shutil.rmtree(os.path.join(args.dataset_path, "images"))
+shutil.copytree(os.path.join(args.dataset_path, "color/input"), os.path.join(args.dataset_path, "structure/input"))
+shutil.copytree(os.path.join(args.dataset_path, "color/input"), os.path.join(args.dataset_path, "images"))
