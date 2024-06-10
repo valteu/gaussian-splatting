@@ -211,7 +211,6 @@ def save_camera_poses(poses, file_path):
             # Write the pose as a flattened 4x4 matrix
             f.write(' '.join(map(str, pose.flatten())) + '\n')
 
-
 def match_features(database_path_1, database_path_2):
     conn1 = sqlite3.connect(database_path_1)
     conn2 = sqlite3.connect(database_path_2)
@@ -221,16 +220,21 @@ def match_features(database_path_1, database_path_2):
 
     # Select keypoints from the first database
     cursor1.execute("SELECT image_id, data FROM keypoints")
-    keypoints1 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 2) for row in cursor1.fetchall()}
+    keypoints1 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 6) for row in cursor1.fetchall()}
 
     # Select keypoints from the second database
     cursor2.execute("SELECT image_id, data FROM keypoints")
-    keypoints2 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 2) for row in cursor2.fetchall()}
+    keypoints2 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 6) for row in cursor2.fetchall()}
+
+    # Print the first few keypoints to inspect their structure
+    for image_id, kp in keypoints1.items():
+        print(f"Image ID: {image_id}, Keypoints: {kp[:5]}")  # Print first 5 keypoints for inspection
+        break
 
     # Initialize the SIFT detector
     sift = cv2.SIFT_create()
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-    matches = []
+    all_matches = []
 
     for image_id in keypoints1.keys():
         if image_id in keypoints2:
@@ -240,9 +244,21 @@ def match_features(database_path_1, database_path_2):
             if kp1.shape[0] < 5 or kp2.shape[0] < 5:
                 continue
 
-            # Convert keypoints to cv2.KeyPoint objects
-            kp1_cv2 = [cv2.KeyPoint(x=float(pt[0]), y=float(pt[1]), _size=1) for pt in kp1]
-            kp2_cv2 = [cv2.KeyPoint(x=float(pt[0]), y=float(pt[1]), _size=1) for pt in kp2]
+            kp1_cv2 = []
+            for pt in kp1:
+                x, y, size, angle, response, octave = map(float, pt)
+                size = max(size, 1.0)  # Ensure size is positive and non-zero
+                angle = angle if angle >= 0 else 0  # Ensure angle is non-negative
+                response = response if response >= 0 else 0  # Ensure response is non-negative
+                kp1_cv2.append(cv2.KeyPoint(x=x, y=y, _size=size, _angle=angle, _response=response, _octave=int(octave)))
+
+            kp2_cv2 = []
+            for pt in kp2:
+                x, y, size, angle, response, octave = map(float, pt)
+                size = max(size, 1.0)  # Ensure size is positive and non-zero
+                angle = angle if angle >= 0 else 0  # Ensure angle is non-negative
+                response = response if response >= 0 else 0  # Ensure response is non-negative
+                kp2_cv2.append(cv2.KeyPoint(x=x, y=y, _size=size, _angle=angle, _response=response, _octave=int(octave)))
 
             # Compute SIFT descriptors for both sets of keypoints
             kp1_cv2, descriptors1 = sift.compute(np.zeros((1000, 1000), dtype=np.uint8), kp1_cv2)
@@ -250,22 +266,25 @@ def match_features(database_path_1, database_path_2):
 
             # Match descriptors
             matches = bf.match(descriptors1, descriptors2)
-            matches.append({
-                'keypoints1': [kp.pt for kp in kp1_cv2],
-                'keypoints2': [kp.pt for kp in kp2_cv2],
-                'matches': matches
-            })
+            if matches:
+                all_matches.append({
+                    'keypoints1': [kp.pt for kp in kp1_cv2],
+                    'keypoints2': [kp.pt for kp in kp2_cv2],
+                    'matches': matches
+                })
 
     conn1.close()
     conn2.close()
 
-    return matches
-
+    return all_matches
 
 def main():
     # Ensure necessary directories exist
     os.makedirs(args.dataset_path + "/distorted", exist_ok=True)
     os.makedirs(args.dataset_path + "/distorted/sparse_color", exist_ok=True)
+
+    # run_convert("structure")
+    # run_convert("color")
 
     color_points_path = os.path.join(args.dataset_path, "color", "sparse", "0", "points3D.bin")
     structure_points_path = os.path.join(args.dataset_path, "structure", "sparse", "0", "points3D.bin")

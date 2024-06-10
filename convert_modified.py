@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 import shutil
 import sqlite3
 import struct
-from PIL import Image
+from PIL import Image, ImageEnhance
 import numpy as np
 
 # Argument parser
@@ -151,42 +151,49 @@ def write_ply(points3D, file_path):
             rgb = data["rgb"]
             ply_file.write(f"{xyz[0]} {xyz[1]} {xyz[2]} {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}\n")
 
+# Function to blend two images with a given alpha value
+def blend_images(img1_path, img2_path, alpha):
+    img1 = Image.open(img1_path).convert("RGBA")
+    img2 = Image.open(img2_path).convert("RGBA")
+    blended_img = Image.blend(img1, img2, alpha).convert("RGB")
+    return blended_img
+
 # Read points3D and update colors
 
 if not args.skip_matching:
     os.makedirs(args.dataset_path + "/distorted/sparse", exist_ok=True)
-
-    # Feature extraction
-    feat_extraction_cmd = (colmap_command + " feature_extractor "
-        "--database_path " + args.dataset_path + "/distorted/database.db "
-        "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
-        "--ImageReader.single_camera 1 "
-        "--ImageReader.camera_model " + args.camera + " "
-        "--SiftExtraction.use_gpu " + str(use_gpu))
-    run_command(feat_extraction_cmd)
-
-    # Feature matching
-    feat_matching_cmd = (colmap_command + " exhaustive_matcher "
-        "--database_path " + args.dataset_path + "/distorted/database.db "
-        "--SiftMatching.use_gpu " + str(use_gpu))
-    run_command(feat_matching_cmd)
-
-    # Bundle adjustment
-    mapper_cmd = (colmap_command + " mapper "
-        "--database_path " + args.dataset_path + "/distorted/database.db "
-        "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
-        "--output_path " + args.dataset_path + "/distorted/sparse "
-        "--Mapper.ba_global_function_tolerance=0.000001")
-    run_command(mapper_cmd)
-
-# Image undistortion
-img_undist_cmd = (colmap_command + " image_undistorter "
-    "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
-    "--input_path " + args.dataset_path + "/distorted/sparse/0 "
-    "--output_path " + args.dataset_path + " "
-    "--output_type COLMAP")
-run_command(img_undist_cmd)
-
+#
+#     # Feature extraction
+#     feat_extraction_cmd = (colmap_command + " feature_extractor "
+#         "--database_path " + args.dataset_path + "/distorted/database.db "
+#         "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
+#         "--ImageReader.single_camera 1 "
+#         "--ImageReader.camera_model " + args.camera + " "
+#         "--SiftExtraction.use_gpu " + str(use_gpu))
+#     run_command(feat_extraction_cmd)
+#
+#     # Feature matching
+#     feat_matching_cmd = (colmap_command + " exhaustive_matcher "
+#         "--database_path " + args.dataset_path + "/distorted/database.db "
+#         "--SiftMatching.use_gpu " + str(use_gpu))
+#     run_command(feat_matching_cmd)
+#
+#     # Bundle adjustment
+#     mapper_cmd = (colmap_command + " mapper "
+#         "--database_path " + args.dataset_path + "/distorted/database.db "
+#         "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
+#         "--output_path " + args.dataset_path + "/distorted/sparse "
+#         "--Mapper.ba_global_function_tolerance=0.000001")
+#     run_command(mapper_cmd)
+#
+# # Image undistortion
+# img_undist_cmd = (colmap_command + " image_undistorter "
+#     "--image_path " + os.path.join(args.dataset_path, "structure/input") + " "
+#     "--input_path " + args.dataset_path + "/distorted/sparse/0 "
+#     "--output_path " + args.dataset_path + " "
+#     "--output_type COLMAP")
+# run_command(img_undist_cmd)
+#
 # Move sparse files
 sparse_files = os.listdir(args.dataset_path + "/sparse")
 os.makedirs(args.dataset_path + "/sparse/0", exist_ok=True)
@@ -214,6 +221,35 @@ if args.resize:
         img.resize((img.width // 4, img.height // 4)).save(os.path.join(args.dataset_path, "images_4", image_file))
         img.resize((img.width // 8, img.height // 8)).save(os.path.join(args.dataset_path, "images_8", image_file))
 
+# Blend the images from the color and structure datasets
+alpha = 0.3
+color_input_path = os.path.join(args.dataset_path, "color/input")
+structure_input_path = os.path.join(args.dataset_path, "structure/input")
+blended_input_path = os.path.join(args.dataset_path, "blended/input")
+os.makedirs(blended_input_path, exist_ok=True)
+
+logging.debug(f"Blending images with alpha={alpha}")
+logging.debug(f"Color input path: {color_input_path}")
+logging.debug(f"Structure input path: {structure_input_path}")
+logging.debug(f"Blended input path: {blended_input_path}")
+
+for image_name in os.listdir(color_input_path):
+    color_image_path = os.path.join(color_input_path, image_name)
+    structure_image_path = os.path.join(structure_input_path, image_name)
+
+    # logging.debug(f"Processing image: {image_name}")
+    # logging.debug(f"Color image path: {color_image_path}")
+    # logging.debug(f"Structure image path: {structure_image_path}")
+
+    if os.path.exists(structure_image_path):
+        print(color_image_path, structure_image_path)
+        blended_image = blend_images(color_image_path, structure_image_path, alpha)
+        blended_image_path = os.path.join(blended_input_path, image_name)
+        blended_image.save(blended_image_path)
+        logging.debug(f"Saved blended image to: {blended_image_path}")
+    else:
+        logging.warning(f"Structure image not found for: {image_name}")
+
 # Update database and points3D colors
 image_names = update_image_colors(os.path.join(args.dataset_path, "distorted/database.db"), os.path.join(args.dataset_path, "color"))
 points3D = read_points3D_bin(os.path.join(args.dataset_path, "sparse/0/points3D.bin"))
@@ -223,8 +259,8 @@ write_points3D_bin(os.path.join(args.dataset_path, "sparse/0/points3D.bin"), poi
 # Write PLY file
 write_ply(points3D, os.path.join(args.dataset_path, "sparse/0/colmap_points.ply"))
 
-# Replace the structure/input and /images directories with the color/input images
+# Replace the structure/input and /images directories with the blended images
 shutil.rmtree(os.path.join(args.dataset_path, "structure/input"))
 shutil.rmtree(os.path.join(args.dataset_path, "images"))
-shutil.copytree(os.path.join(args.dataset_path, "color/input"), os.path.join(args.dataset_path, "structure/input"))
-shutil.copytree(os.path.join(args.dataset_path, "color/input"), os.path.join(args.dataset_path, "images"))
+shutil.copytree(blended_input_path, os.path.join(args.dataset_path, "structure/input"))
+shutil.copytree(blended_input_path, os.path.join(args.dataset_path, "images"))
