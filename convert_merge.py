@@ -72,6 +72,7 @@ def write_points3D_bin(file_path, points3D):
 
 # Function to update image colors in points3D
 def update_image_colors(database_path, color_paths):
+    print(color_paths)
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
 
@@ -101,6 +102,17 @@ def update_image_colors(database_path, color_paths):
     conn.commit()
     conn.close()
     return image_names
+
+def is_valid_keypoint(pt):
+    try:
+        x, y, size, angle, response, octave = map(float, pt)
+        size = max(size, 1.0)
+        angle = angle if angle >= 0 else 0
+        response = response if response >= 0 else 0
+        octave = int(octave)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 def extract_color_from_image(image_path, coordinates):
     img = Image.open(image_path)
@@ -208,137 +220,93 @@ def estimate_relative_transform(matches):
 def save_camera_poses(poses, file_path):
     with open(file_path, 'w') as f:
         for pose in poses:
-            # Write the pose as a flattened 4x4 matrix
-            f.write(' '.join(map(str, pose.flatten())) + '\n')
+            np.savetxt(f, pose)
 
-def match_features(database_path_1, database_path_2):
-    conn1 = sqlite3.connect(database_path_1)
-    conn2 = sqlite3.connect(database_path_2)
 
-    cursor1 = conn1.cursor()
-    cursor2 = conn2.cursor()
+def get_images_and_features_from_db(database_path):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
 
-    # Select keypoints from the first database
-    cursor1.execute("SELECT image_id, data FROM keypoints")
-    keypoints1 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 6) for row in cursor1.fetchall()}
+    cursor.execute("SELECT image_id, name FROM images")
+    images = cursor.fetchall()
 
-    # Select keypoints from the second database
-    cursor2.execute("SELECT image_id, data FROM keypoints")
-    keypoints2 = {row[0]: np.frombuffer(row[1], dtype=np.float32).reshape(-1, 6) for row in cursor2.fetchall()}
+    image_features = {}
+    for image_id, image_name in images:
+        cursor.execute("SELECT data FROM keypoints WHERE image_id=?", (image_id,))
+        keypoints_blob = cursor.fetchone()
+        if keypoints_blob is None:
+            continue
 
-    # Print the first few keypoints to inspect their structure
-    for image_id, kp in keypoints1.items():
-        print(f"Image ID: {image_id}, Keypoints: {kp[:5]}")  # Print first 5 keypoints for inspection
-        break
+        keypoints = cv2.KeyPoint_convert(cv2.KeyPoint().from_bytes(keypoints_blob[0]))
+        image_features[image_name] = keypoints
 
-    # Initialize the SIFT detector
-    sift = cv2.SIFT_create()
-    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-    all_matches = []
+    conn.close()
+    return image_features
 
-    for image_id in keypoints1.keys():
-        if image_id in keypoints2:
-            kp1 = keypoints1[image_id]
-            kp2 = keypoints2[image_id]
+def extract_points(points3D):
+    points = []
+    for data in points3D.values():
+        points.append(data["xyz"])
+    return np.array(points)
 
-            if kp1.shape[0] < 5 or kp2.shape[0] < 5:
-                continue
-
-            kp1_cv2 = []
-            for pt in kp1:
-                x, y, size, angle, response, octave = map(float, pt)
-                size = max(size, 1.0)  # Ensure size is positive and non-zero
-                angle = angle if angle >= 0 else 0  # Ensure angle is non-negative
-                response = response if response >= 0 else 0  # Ensure response is non-negative
-                kp1_cv2.append(cv2.KeyPoint(x=x, y=y, _size=size, _angle=angle, _response=response, _octave=int(octave)))
-
-            kp2_cv2 = []
-            for pt in kp2:
-                x, y, size, angle, response, octave = map(float, pt)
-                size = max(size, 1.0)  # Ensure size is positive and non-zero
-                angle = angle if angle >= 0 else 0  # Ensure angle is non-negative
-                response = response if response >= 0 else 0  # Ensure response is non-negative
-                kp2_cv2.append(cv2.KeyPoint(x=x, y=y, _size=size, _angle=angle, _response=response, _octave=int(octave)))
-
-            # Compute SIFT descriptors for both sets of keypoints
-            kp1_cv2, descriptors1 = sift.compute(np.zeros((1000, 1000), dtype=np.uint8), kp1_cv2)
-            kp2_cv2, descriptors2 = sift.compute(np.zeros((1000, 1000), dtype=np.uint8), kp2_cv2)
-
-            # Match descriptors
-            matches = bf.match(descriptors1, descriptors2)
-            if matches:
-                all_matches.append({
-                    'keypoints1': [kp.pt for kp in kp1_cv2],
-                    'keypoints2': [kp.pt for kp in kp2_cv2],
-                    'matches': matches
-                })
-
-    conn1.close()
-    conn2.close()
-
-    return all_matches
-
-def main():
-    # Ensure necessary directories exist
-    os.makedirs(args.dataset_path + "/distorted", exist_ok=True)
-    os.makedirs(args.dataset_path + "/distorted/sparse_color", exist_ok=True)
-
-    # run_convert("structure")
-    # run_convert("color")
-
-    color_points_path = os.path.join(args.dataset_path, "color", "sparse", "0", "points3D.bin")
-    structure_points_path = os.path.join(args.dataset_path, "structure", "sparse", "0", "points3D.bin")
-
-    if not os.path.exists(color_points_path) or not os.path.exists(structure_points_path):
-        logging.error("Sparse reconstruction files not found. Make sure the COLMAP reconstruction step completed successfully.")
+def perform_icp(source_points, target_points, max_iterations=50, tolerance=1e-6):
+    # Create an ICP object
+    icp = cv2.ppf_match_3d_ICP(max_iterations, tolerance)
+    
+    # Perform ICP alignment
+    retval, residual, transform = icp.registerModelToScene(source_points, target_points)
+    
+    if retval:
+        return transform
+    else:
+        logging.error("ICP alignment failed.")
         exit(1)
 
-    # Read the points3D files
-    color_points = read_points3D_bin(color_points_path)
-    structure_points = read_points3D_bin(structure_points_path)
-
-    # Merge the points3D files
-    merged_points = merge_points3D(color_points, structure_points)
-    merged_points_path = os.path.join(args.dataset_path, "distorted", "sparse_color", "points3D.bin")
-    write_points3D_bin(merged_points_path, merged_points)
-
-    logging.info(f"Merged points3D file written to {merged_points_path}")
-
-    # Update image colors
-    image_paths = [os.path.join(args.dataset_path, "color", "images"), os.path.join(args.dataset_path, "color", "input")]
-    image_names = update_image_colors(os.path.join(args.dataset_path, "color", "distorted", "database.db"), image_paths)
-    color_updated_points = update_point_colors(merged_points, image_paths, image_names)
-
-    logging.info("Updated point colors")
-
-    # Save the updated points3D with colors
-    updated_points_path = os.path.join(args.dataset_path, "distorted", "sparse_color", "points3D_color.bin")
-    write_points3D_bin(updated_points_path, color_updated_points)
-
-    logging.info(f"Updated points3D file with colors written to {updated_points_path}")
-
-    # Perform feature matching
-    matches = match_features(os.path.join(args.dataset_path, "structure", "distorted", "database.db"),
-                             os.path.join(args.dataset_path, "color", "distorted", "database.db"))
-
-    if not matches:
-        logging.error("No matches found.")
-        exit(1)
-
-    # Estimate relative transform
-    relative_transform = estimate_relative_transform(matches)
-
-    # Save the relative transform
-    relative_transform_path = os.path.join(args.dataset_path, "distorted", "sparse_color", "relative_transform.txt")
-    save_camera_poses([relative_transform], relative_transform_path)
-
-    logging.info(f"Relative transform written to {relative_transform_path}")
-
-    # Write PLY file for visualization
-    ply_path = os.path.join(args.dataset_path, "distorted", "sparse_color", "points3D_color.ply")
-    write_ply(color_updated_points, ply_path)
-
-    logging.info(f"PLY file written to {ply_path}")
+def apply_transformation(points3D, transform):
+    transformed_points3D = {}
+    for point_id, data in points3D.items():
+        xyz = np.append(data["xyz"], 1)  # Convert to homogeneous coordinates
+        transformed_xyz = transform.dot(xyz)[:3]  # Apply transformation
+        transformed_points3D[point_id] = {
+            "xyz": transformed_xyz,
+            "rgb": data["rgb"],
+            "error": data["error"],
+            "tracks": data["tracks"]
+        }
+    return transformed_points3D
 
 if __name__ == "__main__":
-    main()
+    # Run convert.py on color and structure datasets
+    # run_convert("color")
+    # run_convert("structure")
+
+    # Update image colors in points3D
+    database_path = os.path.join(args.dataset_path, "structure", "distorted", "database.db")
+    color_paths = [os.path.join(args.dataset_path, "color"), os.path.join(args.dataset_path, "structure")]
+
+    color_img_paths = [c + "/input" for c in color_paths]
+    image_names = update_image_colors(database_path, color_img_paths)
+
+    # Read and merge points3D from color and structure models
+    points3D_color = read_points3D_bin(os.path.join(args.dataset_path, "color/sparse/0/points3D.bin"))
+    points3D_structure = read_points3D_bin(os.path.join(args.dataset_path, "structure/sparse/0/points3D.bin"))
+
+    # Extract points from both point clouds
+    color_points = extract_points(points3D_color)
+    structure_points = extract_points(points3D_structure)
+
+    # Perform ICP alignment
+    transform = perform_icp(structure_points, color_points)
+
+    # Apply transformation to points3D_structure
+    transformed_points3D_structure = apply_transformation(points3D_structure, transform)
+
+    # Merge the aligned point clouds
+    merged_points3D = merge_points3D(points3D_color, transformed_points3D_structure)
+    merged_points3D = update_point_colors(merged_points3D, color_paths, image_names)
+
+    # Write merged points3D to binary file and PLY file
+    write_points3D_bin(os.path.join(args.dataset_path, "distorted/sparse_color/points3D.bin"), merged_points3D)
+    write_ply(merged_points3D, os.path.join(args.dataset_path, "distorted/sparse_color/points3D.ply"))
+
+    logging.info("Conversion and merging completed.")
