@@ -11,24 +11,26 @@ for filename in os.listdir(datasets_path):
     # Check if the path is a directory
     if os.path.isdir(dir_path):
         try:
-            # Convert
-            print(f"Processing: {filename} - convert")
-            subprocess.run(['python3', 'convert.py', '-s', dir_path], check=True)
+            # Set the environment variable for offscreen rendering
+            env = os.environ.copy()
+            env['QT_QPA_PLATFORM'] = 'offscreen'
             
-            """
+            # Convert using Xvfb
+            print(f"Processing: {filename} - convert")
+            subprocess.run(['xvfb-run', '-a', 'python3', 'convert.py', '-s', dir_path], check=True, env=env)
+            
             # Train
             output_dir = os.path.join('output', filename)
             print(f"Processing: {filename} - train")
-            subprocess.run(['python3', 'train.py', '-s', dir_path, '--eval', '-m', output_dir], check=True)
+            subprocess.run(['xvfb-run', '-a', 'python3', 'train.py', '-s', dir_path, '--eval', '-m', output_dir], check=True, env=env)
             
             # Render
             print(f"Processing: {filename} - render")
-            subprocess.run(['python3', 'render.py', '-m', output_dir], check=True)
+            subprocess.run(['xvfb-run', '-a', 'python3', 'render.py', '-m', output_dir], check=True, env=env)
             
             # Metrics
             print(f"Processing: {filename} - metrics")
-            subprocess.run(['python', 'metrics.py', '-m', output_dir], check=True)
-            """
+            subprocess.run(['xvfb-run', '-a', 'python', 'metrics.py', '-m', output_dir], check=True, env=env)
         
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while processing {filename}: {e}")
