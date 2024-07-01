@@ -15,6 +15,7 @@ for filename in os.listdir(datasets_path):
             print(f"Processing: {filename} - convert")
             subprocess.run(['python3', 'convert.py', '-s', dir_path], check=True)
             
+            """
             # Train
             output_dir = os.path.join('output', filename)
             print(f"Processing: {filename} - train")
@@ -27,6 +28,7 @@ for filename in os.listdir(datasets_path):
             # Metrics
             print(f"Processing: {filename} - metrics")
             subprocess.run(['python', 'metrics.py', '-m', output_dir], check=True)
+            """
         
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while processing {filename}: {e}")
