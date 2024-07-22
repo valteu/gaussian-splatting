@@ -8,6 +8,23 @@ datasets_path = 'datasets'
 # Output directory path
 output_root = 'output'
 
+
+src_output_dir = '/workspace/output'
+dest_output_dir = '/dhc/home/valentin.teutschbein/output'
+
+
+def copy_output_directory(src, dest):
+    try:
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+        print(f"Successfully copied {src} to {dest}")
+    except Exception as e:
+        print(f"An error occurred while copying {src} to {dest}: {e}")
+
+
+# Perform the copy operation
+copy_output_directory('/dhc/home/valentin.teutschbein/datasets', '/workspace/datasets')
 # Process each directory inside the datasets folder
 for filename in os.listdir(datasets_path):
     dir_path = os.path.join(datasets_path, filename)
@@ -38,15 +55,6 @@ for filename in os.listdir(datasets_path):
             print(f"An unexpected error occurred while processing {filename}: {e}")
 
 # Copy the output directory to the specified location on the server
-def copy_output_directory(src, dest):
-    try:
-        if os.path.exists(dest):
-            shutil.rmtree(dest)
-        shutil.copytree(src, dest)
-        print(f"Successfully copied {src} to {dest}")
-    except Exception as e:
-        print(f"An error occurred while copying {src} to {dest}: {e}")
-
 # Paths
 src_output_dir = '/workspace/output'
 dest_output_dir = '/dhc/home/valentin.teutschbein/output'
