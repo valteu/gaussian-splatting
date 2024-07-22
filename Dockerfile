@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libjpeg-dev \
     colmap \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Miniconda
@@ -42,14 +43,26 @@ RUN conda create -y --name gaussian_splatting python=3.8 && \
     conda init bash && \
     echo "conda activate gaussian_splatting" >> ~/.bashrc
 
+# Install PyTorch with CUDA 11.8 support
+RUN /bin/bash -c "source activate gaussian_splatting && \
+    pip install torch==1.12.0+cu113 torchvision==0.13.0+cu113 torchaudio==0.12.0 --extra-index-url https://download.pytorch.org/whl/cu113"
+
 # Set the working directory
 WORKDIR /workspace
 
 # Clone the repository with submodules
 RUN git clone --recursive https://github.com/valteu/gaussian-splatting.git .
 
-# Install Python dependencies
-RUN /bin/bash -c "source activate gaussian_splatting"
+# Set CUDA architecture flags
+ENV TORCH_CUDA_ARCH_LIST="7.0+PTX"
+
+# Install Python dependencies and submodules
+RUN /bin/bash -c "source activate gaussian_splatting && \
+    cd submodules/diff-gaussian-rasterization/ && \
+    pip install -e . && \
+    cd ../simple-knn && \
+    pip install -e . && \
+    cd ../.."
 
 # Set the entrypoint to activate conda environment
 ENTRYPOINT ["/bin/bash", "-c", "source activate gaussian_splatting && exec bash"]
