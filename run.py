@@ -2,62 +2,47 @@ import os
 import subprocess
 import shutil
 
-# Path to the datasets directory
-datasets_path = 'datasets'
+# Define paths
+source_dir = '/dhc/home/valentin.teutschbein/degrade_data'
+dest_dir = './datasets'
+result_dir = '/dhc/home/valentin.teutschbein/degrade_data_results'
 
-# Output directory path
-output_root = 'output'
+# Step 1: Copy the source directory to the datasets directory
+if not os.path.exists(dest_dir):
+    os.makedirs(dest_dir)
 
+shutil.copytree(source_dir, dest_dir, dirs_exist_ok=True)
+print(f"Copied {source_dir} to {dest_dir}")
 
-src_output_dir = '/workspace/output'
-dest_output_dir = '/dhc/home/valentin.teutschbein/output'
-
-
-def copy_output_directory(src, dest):
-    try:
-        if os.path.exists(dest):
-            shutil.rmtree(dest)
-        shutil.copytree(src, dest)
-        print(f"Successfully copied {src} to {dest}")
-    except Exception as e:
-        print(f"An error occurred while copying {src} to {dest}: {e}")
-
-
-# Perform the copy operation
-copy_output_directory('/dhc/home/valentin.teutschbein/datasets', '/workspace/datasets')
-# Process each directory inside the datasets folder
-for filename in os.listdir(datasets_path):
-    dir_path = os.path.join(datasets_path, filename)
+# Step 2: Iterate over each directory inside the datasets folder
+for filename in os.listdir(dest_dir):
+    dir_path = os.path.join(dest_dir, filename)
     
     # Check if the path is a directory
     if os.path.isdir(dir_path):
         try:
-            # Convert using Xvfb (uncomment if needed)
+            # Convert using Xvfb
             # print(f"Processing: {filename} - convert")
-            # subprocess.run(['python3', 'convert.py', '-s', dir_path], check=True)
+            subprocess.run(['python3', './convert_optimal_params.py', '-s', dir_path], check=True)
             
             # Train
-            output_dir = os.path.join(output_root, filename)
-            print(f"Processing: {filename} - train")
-            subprocess.run(['python3', 'train.py', '-s', dir_path, '--eval', '-m', output_dir], check=True)
+            print(f"Processing: {dir_path} - train")
+            subprocess.run(['python3', './create_pointclouds.py', '-s', dir_path, '--eval', '-m', dir_path], check=True)
             
-            # Copy the output_dir/input.ply to the dir_path/input.ply
-            src_file = os.path.join(output_dir, 'input.ply')
-            dest_file = os.path.join(dir_path, 'input.ply')
-            print(f"Copying: {src_file} to {dest_file}")
-            shutil.copy(src_file, dest_file)
+            # Render
+            # print(f"Processing: {filename} - render")
+            # subprocess.run(['python3', 'render.py', '-m', output_dir], check=True)
+            
+            # Metrics
+            # print(f"Processing: {filename} - metrics")
+            # subprocess.run(['python', 'metrics.py', '-m', output_dir], check=True)
         
         except subprocess.CalledProcessError as e:
             print(f"An error occurred while processing {filename}: {e}")
-        except FileNotFoundError as e:
-            print(f"File not found error while processing {filename}: {e}")
-        except Exception as e:
-            print(f"An unexpected error occurred while processing {filename}: {e}")
 
-# Copy the output directory to the specified location on the server
-# Paths
-src_output_dir = '/workspace/output'
-dest_output_dir = '/dhc/home/valentin.teutschbein/output'
+# Step 3: Copy the datasets directory to the results directory
+if not os.path.exists(result_dir):
+    os.makedirs(result_dir)
 
-# Perform the copy operation
-copy_output_directory(src_output_dir, dest_output_dir)
+shutil.copytree(dest_dir, result_dir, dirs_exist_ok=True)
+print(f"Copied {dest_dir} to {result_dir}")
