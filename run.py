@@ -39,7 +39,7 @@ def process_directory(dir_path):
 num_cpus = multiprocessing.cpu_count()
 
 # Step 2: Process directories in parallel
-with ThreadPoolExecutor(max_workers=num_cpus) as executor:
+with ThreadPoolExecutor(max_workers=12) as executor:
     futures = []
     for filename in os.listdir(dest_dir):
         dir_path = os.path.join(dest_dir, filename)
